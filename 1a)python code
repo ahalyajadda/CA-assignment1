@@ -1,0 +1,63 @@
+import matplotlib.pyplot as plt
+import numpy as np
+import csv
+
+# === Machine ceilings (example values, replace with your system) ===
+peak_gflops = 470.4   # Peak FLOPS from CPU spec 
+bw_l1 = 305.325       # GB/s
+bw_l2 = 99.795        # GB/s
+bw_l3 = 26.791        # GB/s
+bw_dram = 17.843      # GB/s from STREAM
+
+# === Read multiple rows from CSV ===
+loops = []
+gflops_vals = []
+ai = []
+
+with open("result.csv") as f:
+    reader = csv.DictReader(f)
+    for row in reader:
+        loops.append(row["Loop"])
+        gflops_vals.append(float(row["GFLOPS"]))
+        ai.append(float(row["AI"]))
+# === Build arithmetic intensity range ===
+ai_range = np.logspace(-2, 3, 500)
+
+# === Bandwidth ceilings ===
+roofline_l1   = np.minimum(bw_l1   * ai_range, peak_gflops)
+roofline_l2   = np.minimum(bw_l2   * ai_range, peak_gflops)
+roofline_l3   = np.minimum(bw_l3   * ai_range, peak_gflops)
+roofline_dram = np.minimum(bw_dram * ai_range, peak_gflops)
+
+# === Plot ===
+plt.figure(figsize=(10,8))
+
+# Plot each roofline
+# Main roofline (classical, using DRAM)
+roofline_main = np.minimum(bw_dram * ai_range, peak_gflops)
+plt.loglog(ai_range, roofline_main, label="Main Roofline (DRAM)", linewidth=2, color="black")
+
+# Bandwidth ceilings
+plt.loglog(ai_range, roofline_l1,   label="L1 bandwidth",   linestyle="--", color="orange")
+plt.loglog(ai_range, roofline_l2,   label="L2 bandwidth",   linestyle="--", color="green")
+plt.loglog(ai_range, roofline_l3,   label="L3 bandwidth",   linestyle="--", color="purple")
+plt.loglog(ai_range, roofline_dram, label="DRAM bandwidth", linestyle="--", color="brown")
+
+# Plot peak compute ceiling
+ai_min_knee = min(peak_gflops/bw_dram, peak_gflops/bw_l3, peak_gflops/bw_l2, peak_gflops/bw_l1)
+plt.hlines(y=peak_gflops, xmin=ai_min_knee, xmax=max(ai_range),
+           colors="red", linestyles="-", label="Peak GFLOPS")
+
+# Plot AI points for each kernel
+for i, loop in enumerate(loops):
+    plt.scatter(ai[i],  gflops_vals[i], marker="o", s=120, label=f"{loop}-L1")
+  
+# Labels and formatting
+plt.xlabel("Arithmetic Intensity (FLOPs/Byte)")
+plt.ylabel("Performance (GFLOPS)")
+plt.title("Roofline Model with Cache Bandwidths (4 kernels)")
+plt.legend()
+plt.grid(True, which="both", ls="--", linewidth=0.5)
+
+plt.savefig("roofline_all_kernels.png", dpi=300)
+plt.show()
