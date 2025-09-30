@@ -1,0 +1,185 @@
+//first i will run 2a-fluidaimate-data-clean file after that i will run this
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.optimize import nnls
+import statsmodels.api as sm
+from scipy.stats import shapiro
+from statsmodels.stats.diagnostic import het_breuschpagan
+
+# -----------------------------
+# Step 1: Load fluidanimate CSV
+# -----------------------------
+df = pd.read_csv("fluidanimate_clean.csv")
+
+# Compute CPI
+df["CPI"] = df["cpu_core_cycles_"] / df["cpu_core_instructions_"]
+
+# -----------------------------
+# Step 2: Select features
+# -----------------------------
+features = [
+    'cpu_core_L1-dcache-load-misses_',
+    'cpu_core_L1-icache-load-misses_',
+    'cpu_core_branch-misses_',
+    'cpu_core_LLC-load-misses_',
+    'cpu_core_dTLB-load-misses_',
+    'cpu_core_iTLB-load-misses_',
+    'cpu_core_branch-load-misses_'
+]
+
+X = df[features].fillna(0).values
+y = df['CPI'].values
+
+# -----------------------------
+# Step 3: Clean NaNs and Infs
+# -----------------------------
+mask = np.isfinite(y) & np.all(np.isfinite(X), axis=1)
+X_clean = X[mask]
+y_clean = y[mask]
+
+# -----------------------------
+# Helper function to run NNLS
+# -----------------------------
+def run_nnls(X_data, y_data, label="Overall"):
+    beta, _ = nnls(X_data, y_data)
+    y_pred = X_data @ beta
+    residuals = y_data - y_pred
+    rmse = np.sqrt(np.mean(residuals**2))
+    r2 = 1 - np.sum(residuals**2) / np.sum((y_data - np.mean(y_data))**2)
+    adj_r2 = 1 - (1 - r2) * (len(y_data) - 1) / (len(y_data) - X_data.shape[1] - 1)
+
+    print(f"\n===== CPI Stack ({label}) =====")
+    for feat, coef in zip(features, beta):
+        print(f"{feat}: {coef:.6f}")
+    print(f"RMSE: {rmse:.6f}, R2: {r2:.6f}, Adjusted R2: {adj_r2:.6f}")
+
+    return beta, residuals
+
+# -----------------------------
+# Step 4a: Overall CPI stack
+# -----------------------------
+beta_overall, residuals_overall = run_nnls(X_clean, y_clean, label="Overall")
+
+# -----------------------------
+# Step 4b: OLS for overall stats
+# -----------------------------
+X_sm = sm.add_constant(X_clean)
+ols_model = sm.OLS(y_clean, X_sm).fit()
+print("\n===== OLS Regression Results (Overall) =====")
+print(ols_model.summary())
+
+# -----------------------------
+# Step 5: Residual plots (Overall)
+# -----------------------------
+plt.figure(figsize=(10,5))
+plt.bar(features, beta_overall)
+plt.ylabel("CPI Contribution")
+plt.title("fluidanimate CPI Stack (NNLS, Overall)")
+plt.xticks(rotation=45, ha='right')
+plt.tight_layout()
+plt.savefig("fluidanimate_cpi_stack_nnls.png")
+plt.close()
+
+plt.figure(figsize=(8,5))
+plt.plot(residuals_overall)
+plt.xlabel("Interval")
+plt.ylabel("Residual (Observed - Predicted CPI)")
+plt.title("Residuals of fluidanimate CPI (NNLS, Overall)")
+plt.savefig("fluidanimate_cpi_residuals_nnls.png")
+plt.close()
+
+plt.figure(figsize=(8,5))
+plt.hist(residuals_overall, bins=30, edgecolor='k', alpha=0.7)
+plt.xlabel("Residual")
+plt.ylabel("Frequency")
+plt.title("Histogram of Residuals (NNLS, Overall)")
+plt.savefig("fluidanimate_residuals_hist.png")
+plt.close()
+
+plt.figure(figsize=(6,6))
+sm.qqplot(residuals_overall, line='45', fit=True)
+plt.title("QQ Plot of Residuals (NNLS, Overall)")
+plt.savefig("fluidanimate_residuals_qq.png")
+plt.close()
+
+# -----------------------------
+# Step 6: Residual Tests
+# -----------------------------
+shapiro_stat, shapiro_p = shapiro(residuals_overall)
+print("\n===== Residual Normality Test (Shapiro-Wilk) =====")
+print(f"Statistic = {shapiro_stat:.6f}, p-value = {shapiro_p:.6f}")
+
+bp_test = het_breuschpagan(residuals_overall, X_sm)
+bp_stat, bp_pval = bp_test[0], bp_test[1]
+print("\n===== Residual Heteroscedasticity Test (Breusch-Pagan) =====")
+print(f"Statistic = {bp_stat:.6f}, p-value = {bp_pval:.6f}")
+
+dw_stat = sm.stats.stattools.durbin_watson(residuals_overall)
+print("\n===== Residual Autocorrelation Test (Durbin-Watson) =====")
+print(f"Durbin-Watson Statistic = {dw_stat:.6f}")
+
+# -----------------------------
+# Step 7: CPI stack for 3 phases
+# -----------------------------
+n = len(y_clean)
+phases = {
+    "Phase 1": (0, n//3),
+    "Phase 2": (n//3, 2*n//3),
+    "Phase 3": (2*n//3, n)
+}
+
+phase_betas = {}
+
+for phase_name, (start, end) in phases.items():
+    X_phase = X_clean[start:end]
+    y_phase = y_clean[start:end]
+    beta_phase, _ = run_nnls(X_phase, y_phase, label=phase_name)
+    phase_betas[phase_name] = beta_phase
+
+# -----------------------------
+# Step 8: Compare phases (bar chart)
+# -----------------------------
+phase_names = list(phase_betas.keys())
+betas_matrix = np.array([phase_betas[p] for p in phase_names])
+
+plt.figure(figsize=(12,6))
+bar_width = 0.25
+x = np.arange(len(features))
+
+for i, phase in enumerate(phase_names):
+    plt.bar(x + i*bar_width, betas_matrix[i], width=bar_width, label=phase)
+
+plt.xticks(x + bar_width, features, rotation=45, ha='right')
+plt.ylabel("CPI Contribution")
+plt.title("CPI Stack Comparison Across Phases (NNLS)")
+plt.legend()
+plt.tight_layout()
+plt.savefig("fluidanimate_cpi_stack_phases.png")
+plt.close()
+
+print("\nPlots saved for phases as 'fluidanimate_cpi_stack_phases.png'")
+
+
+# Create DataFrame of contributions
+stack_df = pd.DataFrame({
+    "cpu_core_L1-dcache-load-misses_": [beta_overall[0]],
+    "cpu_core_L1-icache-load-misses_": [beta_overall[1]],
+    "cpu_core_branch-misses_": [beta_overall[2]],
+    "cpu_core_LLC-load-misses_": [beta_overall[3]],
+    "cpu_core_dTLB-load-misses_": [beta_overall[4]],
+    "cpu_core_iTLB-load-misses_": [beta_overall[5]],
+    "cpu_core_branch-load-misses_": [beta_overall[6]],
+}, index=["fluidanimate"])
+
+# Plot stacked bar
+ax = stack_df.plot(kind="bar", stacked=True, figsize=(6,6), colormap="tab20")
+plt.ylabel("CPI Contribution")
+plt.title("fluidanimate CPI Stack (NNLS, Raw Contributions)")
+plt.xticks(rotation=0)
+plt.legend(title="Feature", bbox_to_anchor=(1.05, 1), loc='upper left')
+plt.tight_layout()
+plt.savefig("fluidanimate_cpi_stack_single.png")
+plt.close()
+
+print("\nStacked CPI stack chart saved as 'fluidanimate_cpi_stack_single.png'")
