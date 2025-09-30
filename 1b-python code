@@ -1,0 +1,67 @@
+import matplotlib.pyplot as plt
+import numpy as np
+
+# === Machine ceilings (bandwidths in Bytes/sec) ===
+bw_l1   = 305.3e9   # L1 bandwidth ~ 305 GB/s
+bw_l2   = 61.6e9    # L2 bandwidth ~ 61.6 GB/s
+bw_l3   = 25.1e9    # L3 bandwidth ~ 25.1 GB/s
+bw_dram = 17.8e9    # DRAM bandwidth ~ 17 GB/s
+
+# === BFS Results (Baseline) ===
+edges = 523_609_147
+avg_time = 2.65060
+teps = edges / avg_time   # baseline TEPS
+
+# === Cache misses (from perf stat output) ===
+llc_misses_atom = 417_778
+llc_misses_core = 516_724_309
+llc_misses_total = llc_misses_atom + llc_misses_core
+bytes_from_misses = llc_misses_total * 64  
+
+# Operational Intensity (edges / byte)
+oi = edges / bytes_from_misses
+
+# # === Optimized BFS (example numbers) ===
+# teps_opt = 0.3e9        # improved TEPS
+# oi_opt = oi * 2.5     
+
+# === Arithmetic intensity range (for roofline curves) ===
+ai_range = np.logspace(-6, 3, 500)
+
+# === Bandwidth ceilings (TEPS = BW * OI) ===
+roofline_l1   = bw_l1   * ai_range
+roofline_l2   = bw_l2   * ai_range
+roofline_l3   = bw_l3   * ai_range
+roofline_dram = bw_dram * ai_range
+
+# === Compute roof (flat line at peak TEPS) ===
+peak_teps = 0.982e9  # use best observed performance
+ai_min_knee = min(peak_teps/bw_dram, peak_teps/bw_l3, peak_teps/bw_l2, peak_teps/bw_l1)
+
+# === Plot ===
+plt.figure(figsize=(10,8))
+
+# Rooflines
+plt.loglog(ai_range, np.minimum(roofline_l1,   peak_teps), label="L1 bandwidth",   linestyle="--", color="orange")
+plt.loglog(ai_range, np.minimum(roofline_l2,   peak_teps), label="L2 bandwidth",   linestyle="--", color="green")
+plt.loglog(ai_range, np.minimum(roofline_l3,   peak_teps), label="L3 bandwidth",   linestyle="--", color="purple")
+plt.loglog(ai_range, np.minimum(roofline_dram, peak_teps), label="DRAM bandwidth", linestyle="--", color="brown")
+
+# Compute ceiling
+plt.hlines(y=peak_teps, xmin=ai_min_knee, xmax=max(ai_range),
+           colors="red", linestyles="-", label=f"Peak TEPS ({peak_teps:.2e})")
+
+# BFS measured points
+plt.scatter(oi, teps, marker="o", s=120, color="blue", label="BFS (baseline)")
+# plt.scatter(oi_opt, teps_opt, marker="^", s=150, color="green", label="BFS (optimized)")
+
+# Labels
+plt.xlabel("Operational Intensity (Edges/Byte)")
+plt.ylabel("Performance (TEPS = Edges/s)")
+plt.title("Roofline Model for BFS (Baseline vs Optimized)")
+plt.legend()
+plt.grid(True, which="both", ls="--", linewidth=0.5)
+
+# Save and show
+plt.savefig("roofline_bfs_optimized.png", dpi=300)
+plt.show()
