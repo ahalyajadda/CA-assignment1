@@ -1,0 +1,57 @@
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# =========================
+# Step 1: Load CSV
+# =========================
+df = pd.read_csv("bfs_clean.csv")
+
+# Inspect columns
+print("Columns in CSV:", df.columns)
+print("First few rows:")
+print(df.head())
+
+# =========================
+# Step 2: Compute IPC
+# =========================
+df["IPC"] = df["cpu_core_instructions_"] / df["cpu_core_cycles_"]
+print("\nIPC statistics:")
+print(df["IPC"].describe())
+
+# =========================
+# Step 3: Smooth IPC (optional)
+# =========================
+df["IPC_smooth"] = df["IPC"].rolling(window=5, min_periods=1).mean()
+
+# =========================
+# Step 4: Plot IPC
+# =========================
+plt.figure(figsize=(12,6))
+plt.plot(df["Time"], df["IPC"], label="IPC (raw)", alpha=0.5)
+plt.plot(df["Time"], df["IPC_smooth"], label="IPC (smoothed)", color='red')
+plt.xlabel("Time (s)")
+plt.ylabel("IPC (Instructions per Cycle)")
+plt.title("BFS Benchmark: IPC over Time")
+plt.legend()
+plt.grid(True)
+plt.tight_layout()
+
+# Save the plot as PNG
+plt.savefig("bfs_ipc_plot.png")
+print("IPC plot saved as bfs_ipc_plot.png")
+# =========================
+# Step 5: Identify coarse phases (~100M instructions)
+# =========================
+df["cumulative_instructions"] = df["cpu_core_instructions_"].cumsum()
+phase_size = 100_000_000  # 100M instructions
+
+phases = []
+current_start = 0
+for i in range(len(df)):
+    if df["cumulative_instructions"].iloc[i] - df["cumulative_instructions"].iloc[current_start] >= phase_size:
+        phases.append((current_start, i))
+        current_start = i
+
+print("\nDetected coarse phases (start_idx, end_idx):")
+for start, end in phases:
+    print(f"Phase from row {start} to {end}, Time {df['Time'].iloc[start]:.3f} - {df['Time'].iloc[end]:.3f}s")
