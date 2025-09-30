@@ -1,0 +1,36 @@
+import pandas as pd
+
+# Load CSV, skip comment lines starting with #
+df = pd.read_csv("bfs_perf.csv", header=None, low_memory=False, comment="#")
+
+# Now select the columns we need
+df = df[[0,1,3]]  # Time, Count, Event
+df.columns = ["Time","Count","Event"]
+
+# Drop rows where Event is NaN
+df = df.dropna(subset=["Event"])
+
+# Keep only cpu_core events
+df = df[df["Event"].str.contains("cpu_core", na=False)]
+
+# Remove rows where Count is "<not counted>"
+df = df[df["Count"] != "<not counted>"]
+
+# Remove commas from Count and convert to numeric
+df["Count"] = pd.to_numeric(df["Count"].astype(str).str.replace(',',''), errors='coerce')
+
+# Drop rows where conversion failed
+df = df.dropna(subset=["Count"])
+
+# Clean Event names: remove slashes and spaces
+df["Event"] = df["Event"].str.strip().str.replace('/', '_')
+
+# Pivot table
+df_pivot = df.pivot_table(index="Time", columns="Event", values="Count", aggfunc="sum").reset_index()
+
+# Sort by Time
+df_pivot = df_pivot.sort_values("Time")
+
+# Save reshaped CSV
+df_pivot.to_csv("bfs_clean.csv", index=False)
+print("Reshaped CSV saved as bfs_clean.csv")
